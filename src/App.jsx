@@ -1,6 +1,7 @@
 ﻿import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import Home from './frontend/Landing Page/Home'
 import CapstoneSearch from './frontend/Landing Page/CapstoneSearch'
+import CapstoneDetails from './frontend/Landing Page/CapstoneDetails'
 import AboutUs from './frontend/Landing Page/AboutUs'
 import AdminLoginPage from './frontend/Admin/AdminLoginPage'
 import AdminDashboard from './frontend/Admin/AdminDashboard'
@@ -13,6 +14,7 @@ export default function App() {
 			<Routes>
 				<Route path="/" element={<Home />} />
 				<Route path="/capstone" element={<CapstoneSearch />} />
+				<Route path="/capstone/:capstoneId" element={<CapstoneDetails />} />
 				<Route path="/about" element={<AboutUs />} />
 				<Route path="/admin/login" element={<AdminLoginPage />} />
 				<Route path="/admin/dashboard" element={<AdminDashboard />} />

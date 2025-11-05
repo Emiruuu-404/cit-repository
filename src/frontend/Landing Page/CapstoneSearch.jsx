@@ -175,9 +175,13 @@ export default function CapstoneSearch() {
     function handleOpen(card) {
         if (!card?.id) return
         try {
-            const page = new URL(backendUrl('/capstone'))
-            page.searchParams.set('id', card.id)
-            window.open(page.toString(), '_blank', 'noopener,noreferrer')
+            const base = import.meta.env.BASE_URL ?? '/'
+            const target = new URL(base, window.location.origin)
+            const normalizedPath = target.pathname.endsWith('/') ? target.pathname.slice(0, -1) : target.pathname
+            target.pathname = `${normalizedPath}/capstone/${card.id}`
+            target.search = ''
+            target.hash = ''
+            window.open(target.toString(), '_blank', 'noopener,noreferrer')
         } catch (error) {
             console.error('Open failed', error)
             setCardMessage(card.id, { type: 'error', text: 'Unable to open capstone overview page.' })
