@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Navbar from './Navbar'
 import V9Gradient from "../../assets/images/V9.svg"
+import { searchCapstones, summarizeCapstone, getCapstone, backendUrl } from '../../api'
 
 export default function CapstoneSearch() {
     const [searchQuery, setSearchQuery] = useState("")
@@ -9,99 +10,50 @@ export default function CapstoneSearch() {
     const [currentPage, setCurrentPage] = useState(1)
     const [filterType, setFilterType] = useState("All")
     const [categoryFilter, setCategoryFilter] = useState("Category")
+    const [apiResults, setApiResults] = useState([])
+    const [summaries, setSummaries] = useState({})
+    const [activeSummaryId, setActiveSummaryId] = useState(null)
+    const [loadingSummaryId, setLoadingSummaryId] = useState(null)
+    const [downloadingId, setDownloadingId] = useState(null)
+    const [cardMessages, setCardMessages] = useState({})
+    const [detailsCache, setDetailsCache] = useState({})
     const totalPages = 30
 
-    // Sample dataset with more keywords for better searching
-    const allCards = [
-        {
-            id: 1,
-        title: "AgriLearn: A Web-based Production Planning System for High-Value Crops",
-        author: "Alipante et. al.",
-        year: 2023,
-            category: "Web App",
-            filterType: "Recent",
-            keywords: ["agrilearn", "agriculture", "farming", "production", "planning", "crops", "web", "system"],
-            abstract: "AgriLearn is a web-based production planning system for high-value crops in the Philippines. It helps farmers, students, and enthusiasts with crop selection, planting recommendations, cost estimation, and yield forecasting.",
-            tags: ["Web App", "Agriculture", "IoT"]
-        },
-        {
-            id: 2,
-            title: "SmartFarm Mobile: IoT-Based Agricultural Monitoring System",
-            author: "Santos et. al.",
-            year: 2024,
-            category: "Mobile App",
-            filterType: "Recent",
-            keywords: ["smartfarm", "iot", "agricultural", "monitoring", "mobile", "farming", "sensors"],
-            abstract: "SmartFarm Mobile is an IoT-based agricultural monitoring system that enables real-time tracking of crop conditions, soil moisture, temperature, and other environmental factors through mobile devices.",
-            tags: ["Mobile App", "IoT", "Agriculture"]
-        },
-        {
-            id: 3,
-            title: "Network Security Analyzer for Enterprise Systems",
-            author: "Garcia et. al.",
-            year: 2022,
-            category: "Networking",
-            filterType: "Popular",
-            keywords: ["network", "security", "analyzer", "enterprise", "systems", "cybersecurity"],
-            abstract: "A comprehensive network security analyzer designed for enterprise systems to detect vulnerabilities, monitor network traffic, and provide real-time threat analysis and prevention mechanisms.",
-            tags: ["Networking", "Security", "Enterprise"]
-        },
-        {
-            id: 4,
-            title: "Home Automation System using IoT Sensors",
-            author: "Reyes et. al.",
-            year: 2023,
-            category: "IoT",
-            filterType: "Popular",
-            keywords: ["home", "automation", "iot", "sensors", "smart", "house"],
-            abstract: "An intelligent home automation system that utilizes IoT sensors to control lighting, temperature, security, and other home appliances remotely through a centralized mobile application.",
-            tags: ["IoT", "Automation", "Smart Home"]
-        }
-    ]
+    const displayedCards = (apiResults || []).map(r => ({
+        id: r.project_id,
+        title: r.title,
+        author: Array.isArray(r.authors) && r.authors.length ? r.authors.join(', ') : 'Unknown',
+        year: r.year || '',
+        category: r.category || 'Unknown',
+        filterType: 'Recent',
+        keywords: Array.isArray(r.keywords) ? r.keywords : [],
+        abstract: Array.isArray(r.snippets) ? r.snippets[0] : (r.snippets || ''),
+        tags: Array.isArray(r.keywords) ? r.keywords : [],
+    }))
 
-    // Filter and search logic
-    const getFilteredCards = () => {
-        let filtered = [...allCards]
-
-        // Apply filter type
-        if (filterType !== "All") {
-            filtered = filtered.filter(card => card.filterType === filterType)
-        }
-
-        // Apply category filter
-        if (categoryFilter !== "Category") {
-            filtered = filtered.filter(card => card.category === categoryFilter)
-        }
-
-        // Apply search query - search in title, author, category, and keywords
-        if (searchQuery.trim()) {
-            const query = searchQuery.toLowerCase().trim()
-            filtered = filtered.filter(card => {
-                const titleMatch = card.title.toLowerCase().includes(query)
-                const authorMatch = card.author.toLowerCase().includes(query)
-                const categoryMatch = card.category.toLowerCase().includes(query)
-                const keywordMatch = card.keywords.some(keyword => keyword.includes(query))
-                
-                return titleMatch || authorMatch || categoryMatch || keywordMatch
-            })
-        }
-
-        return filtered
-    }
-
-    const filteredCards = getFilteredCards()
-    // Only show results when there's a search query (filters refine the search results)
-    const hasResults = searchQuery.trim() !== "" && filteredCards.length > 0
+    const hasResults = searchQuery.trim() !== "" && displayedCards.length > 0
 
     function handleSearch(e) {
         e.preventDefault()
         if (searchQuery.trim()) {
             setIsLoading(true)
-            setTimeout(() => {
-                setIsLoading(false)
-                setShowResults(true)
-                setCurrentPage(1)
-            }, 800)
+            setSummaries({})
+            setActiveSummaryId(null)
+            setCardMessages({})
+            setDetailsCache({})
+            // call backend search endpoint
+            searchCapstones(searchQuery, 12)
+                .then((data) => {
+                    setApiResults(data.results || [])
+                    setShowResults(true)
+                    setCurrentPage(1)
+                })
+                .catch((err) => {
+                    console.error('Search failed', err)
+                    setApiResults([])
+                    setShowResults(true)
+                })
+                .finally(() => setIsLoading(false))
         }
     }
 
@@ -113,6 +65,10 @@ export default function CapstoneSearch() {
         if (value.trim() === "") {
             setShowResults(false)
             setIsLoading(false)
+            setSummaries({})
+            setActiveSummaryId(null)
+            setCardMessages({})
+            setDetailsCache({})
         }
     }
 
@@ -143,6 +99,88 @@ export default function CapstoneSearch() {
             setTimeout(() => {
                 setIsLoading(false)
             }, 300)
+        }
+    }
+
+    function setCardMessage(cardId, message) {
+        setCardMessages(prev => {
+            if (!message) {
+                const { [cardId]: _removed, ...rest } = prev
+                return rest
+            }
+            return { ...prev, [cardId]: message }
+        })
+    }
+
+    async function handleSummarize(card) {
+        if (!card) return
+        if (activeSummaryId === card.id && summaries[card.id] && !loadingSummaryId) {
+            setActiveSummaryId(null)
+            return
+        }
+        setActiveSummaryId(card.id)
+        setLoadingSummaryId(card.id)
+        setCardMessage(card.id, null)
+        try {
+            const response = await summarizeCapstone(card.title || searchQuery, { k: 8 })
+            setSummaries(prev => ({ ...prev, [card.id]: response }))
+        } catch (error) {
+            console.error('Summarize failed', error)
+            setSummaries(prev => {
+                const { [card.id]: _omit, ...rest } = prev
+                return rest
+            })
+            setCardMessage(card.id, { type: 'error', text: 'Summarize failed. Check backend logs and AI configuration.' })
+        } finally {
+            setLoadingSummaryId(null)
+        }
+    }
+
+    async function handleDownload(card) {
+        if (!card?.id) return
+        setDownloadingId(card.id)
+        setCardMessage(card.id, null)
+        try {
+            const cached = detailsCache[card.id]
+            const details = cached || await getCapstone(card.id)
+            if (!cached) {
+                setDetailsCache(prev => ({ ...prev, [card.id]: details }))
+            }
+            const filePath = details?.download_url || details?.docx
+            if (!filePath) {
+                throw new Error('No downloadable document available for this capstone.')
+            }
+            const url = backendUrl(filePath)
+            const response = await fetch(url, { credentials: 'include' })
+            if (!response.ok) {
+                throw new Error('Capstone document is not available in storage.')
+            }
+            const blob = await response.blob()
+            const downloadUrl = URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            link.href = downloadUrl
+            link.download = details?.download_filename || details?.filename || `capstone-${card.id}.pdf`
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+            URL.revokeObjectURL(downloadUrl)
+        } catch (error) {
+            console.error('Download failed', error)
+            setCardMessage(card.id, { type: 'error', text: error.message || 'Download failed. Please try again.' })
+        } finally {
+            setDownloadingId(null)
+        }
+    }
+
+    function handleOpen(card) {
+        if (!card?.id) return
+        try {
+            const page = new URL(backendUrl('/capstone'))
+            page.searchParams.set('id', card.id)
+            window.open(page.toString(), '_blank', 'noopener,noreferrer')
+        } catch (error) {
+            console.error('Open failed', error)
+            setCardMessage(card.id, { type: 'error', text: 'Unable to open capstone overview page.' })
         }
     }
 
@@ -219,7 +257,7 @@ export default function CapstoneSearch() {
                                         <button type="button" className="p-1.5 hover:bg-purple-50 hover:scale-110 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 rounded-full" aria-label="Voice search">
                                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 text-purple-600">
                                                 <path d="M8.25 4.5a3.75 3.75 0 117.5 0v8.25a3.75 3.75 0 11-7.5 0V4.5z" />
-                                                <path d="M6 10.5a.75.75 0 01.75.75v1.5a5.25 5.25 0 1010.5v-1.5a.75.75 0 011.5 0v1.5a6.75 6.75 0 01-13.5 0v-1.5A.75.75 0 016 10.5z" />
+                                                <path d="M6 10.5a.75.75 0 01.75.75v1.5a5.25 5.25 0 0010.5 0v-1.5a.75.75 0 011.5 0v1.5a6.75 6.75 0 01-13.5 0v-1.5A.75.75 0 016 10.5z" />
                                             </svg>
                                         </button>
                                         <button type="submit" className="p-1.5 hover:bg-purple-50 hover:scale-110 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 rounded-full" aria-label="Search">
@@ -306,7 +344,7 @@ export default function CapstoneSearch() {
                                     </div>
                                 ) : hasResults ? (
                                     // Show all matching cards with fade-in animation
-                                    filteredCards.map((card, index) => (
+                                    displayedCards.map((card, index) => (
                                         <article 
                                             key={card.id} 
                                             className="rounded-xl bg-gray-50 p-6 shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-card"
@@ -342,26 +380,82 @@ export default function CapstoneSearch() {
                                             
                                             {/* Action Buttons */}
                                             <div className="flex items-center gap-3 justify-end">
-                                                <button className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-500 px-4 py-2.5 text-sm font-medium text-white hover:from-purple-600 hover:to-indigo-600 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all shadow-sm">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSummarize(card)}
+                                                    disabled={loadingSummaryId === card.id}
+                                                    className={`inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-500 px-4 py-2.5 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all shadow-sm ${loadingSummaryId === card.id ? 'opacity-70 cursor-wait' : 'hover:from-purple-600 hover:to-indigo-600'}`}
+                                                >
                                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                                                         <path fillRule="evenodd" d="M4.5 3.75a3 3 0 013-3h9a3 3 0 013 3v4.5a.75.75 0 01-1.5 0V3.75a1.5 1.5 0 00-1.5-1.5h-9a1.5 1.5 0 00-1.5 1.5v16.5a1.5 1.5 0 001.5 1.5h9a1.5 1.5 0 001.5-1.5v-4.5a.75.75 0 011.5 0v4.5a3 3 0 01-3 3h-9a3 3 0 01-3-3V3.75z" clipRule="evenodd" />
                                                         <path fillRule="evenodd" d="M15.75 4.5a.75.75 0 01.75.75v3a.75.75 0 01-1.5 0V6.31l-2.47 2.47a.75.75 0 11-1.06-1.06l2.47-2.47H12a.75.75 0 010-1.5h3.75z" clipRule="evenodd" />
                                                     </svg>
-                                                    Summarize
+                                                    {loadingSummaryId === card.id ? 'Summarizing…' : 'Summarize'}
                                                 </button>
-                                                <button className="inline-flex items-center gap-2 rounded-lg bg-purple-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-purple-800 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all shadow-sm">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDownload(card)}
+                                                    disabled={downloadingId === card.id}
+                                                    className={`inline-flex items-center gap-2 rounded-lg bg-purple-700 px-4 py-2.5 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all shadow-sm ${downloadingId === card.id ? 'opacity-70 cursor-wait' : 'hover:bg-purple-800'}`}
+                                                >
                                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                                                         <path fillRule="evenodd" d="M12 2.25a.75.75 0 01.75.75v11.25l8.97-8.97a.75.75 0 111.06 1.06l-9.5 9.5a.75.75 0 01-1.06 0l-9.5-9.5a.75.75 0 111.06-1.06l8.97 8.97V3a.75.75 0 01.75-.75zm6 13.5a.75.75 0 01.75.75v7.5a.75.75 0 01-1.5 0v-7.5a.75.75 0 01.75-.75zM3.75 19.5a.75.75 0 100-1.5H2.25a.75.75 0 100 1.5h1.5zm15 0a.75.75 0 100-1.5h-1.5a.75.75 0 100 1.5h1.5z" clipRule="evenodd" />
                                                     </svg>
-                                                    Download
+                                                    {downloadingId === card.id ? 'Preparing…' : 'Download'}
                                                 </button>
-                                                <button className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all shadow-sm">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleOpen(card)}
+                                                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all shadow-sm"
+                                                >
                                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
                                                         <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
                                                     </svg>
                                                     Open
                                                 </button>
                                             </div>
+                                            {activeSummaryId === card.id && (
+                                                <div className="mt-6 rounded-lg border border-purple-200 bg-white p-4">
+                                                    {loadingSummaryId === card.id ? (
+                                                        <div className="flex items-center gap-2 text-sm text-purple-600">
+                                                            <svg className="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V2C5.373 2 0 7.373 0 14h4zm2 5.291A7.962 7.962 0 014 14H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                            </svg>
+                                                            Generating summary…
+                                                        </div>
+                                                    ) : summaries[card.id] ? (
+                                                        <div className="space-y-3">
+                                                            <div>
+                                                                <p className="text-sm font-semibold text-gray-900">Generated Summary</p>
+                                                                <div
+                                                                    className="prose prose-sm max-w-none text-sm text-gray-700"
+                                                                    dangerouslySetInnerHTML={{ __html: summaries[card.id].summary || '<p>No summary generated.</p>' }}
+                                                                />
+                                                            </div>
+                                                            {Array.isArray(summaries[card.id].used_sources) && summaries[card.id].used_sources.length > 0 && (
+                                                                <div>
+                                                                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Sources</p>
+                                                                    <ul className="mt-1 space-y-1">
+                                                                        {summaries[card.id].used_sources.map((source) => (
+                                                                            <li key={source.index} className="text-xs text-gray-600">
+                                                                                [{source.index}] {source.title} {source.year ? `(${source.year})` : ''}
+                                                                            </li>
+                                                                        ))}
+                                                                    </ul>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <p className="text-sm text-gray-500">No summary available for this capstone.</p>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {cardMessages[card.id] && (
+                                                <p className={`mt-3 text-sm ${cardMessages[card.id].type === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
+                                                    {cardMessages[card.id].text}
+                                                </p>
+                                            )}
                                         </article>
                                     ))
                                 ) : (
